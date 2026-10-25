@@ -1,0 +1,332 @@
+{
+  "name": "SentinelAI - Email Threat Detection",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "filters": {
+          "labelIds": [
+            "INBOX"
+          ],
+          "q": "=in:inbox -subject:\"SentinelAI - Security Threat Report\""
+        }
+      },
+      "id": "f34bbe4f-aff7-4900-9ec4-308501130351",
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "removeItemsSeenInPreviousExecutions",
+        "dedupeValue": "={{ $json.id }}",
+        "options": {}
+      },
+      "id": "d7a9e7ae-9253-4277-8c90-63388ffcb0fe",
+      "name": "Remove Duplicates",
+      "type": "n8n-nodes-base.removeDuplicates",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "messageId": "={{ $('Gmail Trigger').item.json.id }}\n",
+        "simple": false,
+        "options": {}
+      },
+      "id": "7c669e05-5461-4cee-a648-98a8512e6b11",
+      "name": "Get a message",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        672,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst items = $input.all();\n\nreturn items.map(item => {\n  const email = item.json;\n\n  const content = [\n    email.subject || \"\",\n    email.text || \"\",\n    email.html || \"\"\n  ].join(\" \");\n\n  const patterns = {\n    emailAddress: /\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b/i,\n    phoneNumber: /\\b(?:\\+1[-.\\s]?)?\\(?\\d{3}\\)?[-.\\s]?\\d{3}[-.\\s]?\\d{4}\\b/,\n    socialSecurityNumber: /\\b\\d{3}-\\d{2}-\\d{4}\\b/,\n    creditCardNumber: /\\b(?:\\d[ -]?){13,19}\\b/,\n    passwordField: /\\b(?:password|passwd|pwd)\\s*[:=]\\s*\\S+/i,\n    apiKey: /\\b(?:api[_ -]?key|secret[_ -]?key|access[_ -]?token)\\s*[:=]\\s*\\S+/i\n  };\n\n  const detectedTypes = Object.entries(patterns)\n    .filter(([name, pattern]) => pattern.test(content))\n    .map(([name]) => name);\n\n  return {\n    json: {\n      ...email,\n      sensitiveDataDetected: detectedTypes.length > 0,\n      sensitiveDataTypes: detectedTypes,\n      privacyScanStatus: \"PRELIMINARY\",\n      externalAIAllowed: false\n    }\n  };\n});\n"
+      },
+      "id": "fb6ef8ee-713a-4852-a2bf-05ad6ca7d836",
+      "name": "Sensitive Data Scanner",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst emails = $input.all();\n\nreturn emails.map(item => {\n  const email = item.json;\n\n  // Get email content\n  const html = String(email.html || \"\");\n  const text = String(email.text || \"\");\n\n  const subject = String(\n    email.subject ||\n    email.Subject ||\n    email.headers?.subject ||\n    \"\"\n  );\n\n  const content = (subject + \" \" + text + \" \" + html)\n    .toLowerCase();\n\n  // Extract URLs\n  const hrefPattern =\n    /href\\s*=\\s*[\"']?(https?:\\/\\/[^\\s\"'<>]+)/gi;\n\n  const plainPattern =\n    /https?:\\/\\/[^\\s\"'<>]+/gi;\n\n  const urls = new Set();\n\n  for (const match of html.matchAll(hrefPattern)) {\n    urls.add(match[1].replace(/&amp;/g, \"&\"));\n  }\n\n  for (const match of (html + \" \" + text).matchAll(plainPattern)) {\n    urls.add(match[0].replace(/&amp;/g, \"&\"));\n  }\n\n  // Detect suspicious language\n  const keywords = [\n    \"urgent\",\n    \"verify your account\",\n    \"password\",\n    \"suspended\",\n    \"account locked\",\n    \"unusual activity\",\n    \"immediately\",\n    \"confirm your identity\",\n    \"security alert\",\n    \"verify your identity\",\n    \"payment failed\",\n    \"click here to verify\"\n  ];\n\n  const indicators = keywords.filter(word =>\n    content.includes(word)\n  );\n\n  // Preserve privacy scan results\n  const sensitiveDataDetected =\n    email.sensitiveDataDetected ?? null;\n\n  const sensitiveDataTypes =\n    Array.isArray(email.sensitiveDataTypes)\n      ? email.sensitiveDataTypes\n      : [];\n\n  const privacyScanStatus =\n    email.privacyScanStatus ?? \"NOT_ASSESSED\";\n\n  return {\n    json: {\n      messageId: email.id ?? email.messageId ?? null,\n\n      linkCount: urls.size,\n\n      // Save extracted links\n      detectedUrls: Array.from(urls),\n\n      suspiciousIndicatorCount: indicators.length,\n\n      // Save matched phrases\n      suspiciousKeywords: indicators,\n\n      sensitiveDataDetected,\n      sensitiveDataTypes,\n      privacyScanStatus,\n\n      externalAIAllowed: false,\n\n      analysisStatus:\n        \"Pending privacy and threat checks\"\n    }\n  };\n});\n"
+      },
+      "id": "aba94832-a2fb-4709-993a-5a5973fa4d09",
+      "name": "Code Node Link Dectection",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nreturn $input.all().map(item => {\n  const data = item.json;\n\n  const count = Number(data.suspiciousIndicatorCount) || 0;\n  const links = Number(data.linkCount) || 0;\n\n  let risk = \"Needs Review\";\n\n  if (count >= 2) {\n    risk = \"High\";\n  } else if (count === 1) {\n    risk = \"Medium\";\n  } else if (links === 0) {\n    risk = \"Low\";\n  }\n\n  let riskExplanation = \"\";\n\n  if (count >= 2) {\n    riskExplanation =\n      `This email triggered ${count} suspicious indicators. ` +\n      \"Multiple warning signs were detected and the email should be reviewed.\";\n  } else if (count === 1) {\n    riskExplanation =\n      \"This email triggered one suspicious indicator and should be reviewed.\";\n  } else if (links === 0) {\n    riskExplanation =\n      \"No suspicious indicators or links were detected by the preliminary checks.\";\n  } else {\n    riskExplanation =\n      \"Links were detected, but their reputation has not been verified.\";\n  }\n\n  return {\n    json: {\n      ...data,\n      preliminaryRisk: risk,\n      riskExplanation,\n      riskAssessmentStatus: \"Unverified\",\n      externalAIAllowed: false\n    }\n  };\n});\n"
+      },
+      "id": "fd474516-4864-4c13-9180-6d11273dec02",
+      "name": "Preliminary Risk Assessment.",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst items = $input.all();\n\nreturn items.map(item => {\n  const data = item.json;\n\n  // Check that the link detector ran\n  const hasRequiredFields =\n    typeof data.linkCount === \"number\" &&\n    typeof data.suspiciousIndicatorCount === \"number\";\n\n  // Read the sensitive data scanner results\n  const sensitiveDataDetected =\n    data.sensitiveDataDetected;\n\n  const sensitiveDataTypes =\n    Array.isArray(data.sensitiveDataTypes)\n      ? data.sensitiveDataTypes\n      : [];\n\n  const privacyScanStatus =\n    data.privacyScanStatus ?? \"NOT_ASSESSED\";\n\n  // Only accept a completed preliminary scan\n  const scanCompleted =\n    privacyScanStatus === \"PRELIMINARY\" &&\n    typeof sensitiveDataDetected === \"boolean\";\n\n  // Never permit external AI at this stage\n  const externalAIAllowed = false;\n\n  let privacyStatus = \"NOT_ASSESSED\";\n\n  if (scanCompleted && sensitiveDataDetected) {\n    privacyStatus = \"SENSITIVE_DATA_DETECTED\";\n  } else if (scanCompleted) {\n    privacyStatus = \"PRELIMINARY_CLEAR\";\n  }\n\n  return {\n    json: {\n      messageId: data.messageId ?? null,\n\n      linkCount: data.linkCount ?? 0,\n\n      suspiciousIndicatorCount:\n        data.suspiciousIndicatorCount ?? 0,\n\n      // Preserve detected URLs\n      detectedUrls: Array.isArray(data.detectedUrls)\n        ? data.detectedUrls\n        : [],\n\n      // Preserve suspicious phrases\n      suspiciousKeywords: Array.isArray(data.suspiciousKeywords)\n        ? data.suspiciousKeywords\n        : [],\n\n      preliminaryRisk:\n        data.preliminaryRisk ?? \"Needs Review\",\n\n      // Preserve risk explanation\n      riskExplanation:\n        data.riskExplanation ??\n        \"No detailed risk explanation is available.\",\n\n      riskAssessmentStatus:\n        data.riskAssessmentStatus ?? \"Unverified\",\n\n      sensitiveDataDetected:\n        scanCompleted ? sensitiveDataDetected : null,\n\n      sensitiveDataTypes,\n\n      privacyScanStatus,\n\n      privacyStatus,\n\n      externalAIAllowed,\n\n      processingStatus: !hasRequiredFields\n        ? \"Missing detector fields\"\n        : !scanCompleted\n          ? \"Privacy scan not completed\"\n          : sensitiveDataDetected\n            ? \"Sensitive information detected - external analysis blocked\"\n            : \"Preliminary scan completed - external analysis still blocked\"\n    }\n  };\n});\n"
+      },
+      "id": "41ecc9f1-8d4a-41fa-9973-ac6b3ae5c2d2",
+      "name": "Privacy Security Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://safebrowsing.googleapis.com/v4/threatMatches:find",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  client: {\n    clientId: \"sentinelai-portfolio\",\n    clientVersion: \"1.0.0\"\n  },\n  threatInfo: {\n    threatTypes: [\"MALWARE\", \"SOCIAL_ENGINEERING\"],\n    platformTypes: [\"ANY_PLATFORM\"],\n    threatEntryTypes: [\"URL\"],\n    threatEntries: $json.detectedUrls.map(u => ({ url: u }))\n  }\n}) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "16f38393-1148-4360-9df7-786288905757",
+      "name": "HTTP Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1792,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nreturn $input.all().map((item, idx) => {\n  const data = $('Privacy Security Gate').all()[idx]?.json || {};\n  const lookup = item.json || {};\n\n  // Read Google Safe Browsing response\n  const responseBody = lookup.body ?? lookup;\n  const statusCode = Number(lookup.statusCode ?? 0);\n\n  const links = Number(data.linkCount ?? 0);\n  const indicators = Number(data.suspiciousIndicatorCount ?? 0);\n  const risk = data.preliminaryRisk || \"Needs Review\";\n\n  const urlCheckRan =\n    links > 0 &&\n    !lookup.error &&\n    statusCode === 200;\n\n  const threatMatches = Array.isArray(responseBody.matches)\n    ? responseBody.matches\n    : [];\n\n  const threatDetected = threatMatches.length > 0;\n\n  const detectedUrls = Array.isArray(data.detectedUrls)\n    ? data.detectedUrls\n    : [];\n\n  const suspiciousKeywords = Array.isArray(data.suspiciousKeywords)\n    ? data.suspiciousKeywords\n    : [];\n\n  const riskExplanation =\n    data.riskExplanation ||\n    \"No detailed risk explanation is available.\";\n\n  const sensitiveDetected = data.sensitiveDataDetected === true;\n\n  const sensitiveTypes = Array.isArray(data.sensitiveDataTypes)\n    ? data.sensitiveDataTypes\n    : [];\n\n  const privacyStatus = data.privacyStatus || \"NOT_ASSESSED\";\n  const privacyScanStatus = data.privacyScanStatus || \"NOT_ASSESSED\";\n\n  const externalAIAllowed = false;\n\n  const recommendations = [\n    \"Do not open unexpected links or attachments.\",\n    \"Verify suspicious requests through official websites.\",\n    \"Do not share passwords or sensitive information.\"\n  ];\n\n  if (sensitiveDetected) {\n    recommendations.push(\n      \"Sensitive information was detected. Review before sharing.\"\n    );\n  }\n\n  if (risk === \"High\" || risk === \"Medium\") {\n    recommendations.push(\n      \"Review this email carefully for possible phishing.\"\n    );\n  }\n\n  if (threatDetected) {\n    recommendations.push(\n      \"Google Safe Browsing identified a potential threat. Do not visit the flagged URL.\"\n    );\n  } else if (!urlCheckRan && links > 0) {\n    recommendations.push(\n      \"URL reputation could not be verified. Treat links with caution.\"\n    );\n  }\n\n  // Report status accurately when there are no URLs\n  const verificationStatus = links === 0\n    ? \"Not required - no URLs detected\"\n    : !urlCheckRan\n      ? \"Not completed\"\n      : threatDetected\n        ? \"Potential threat identified\"\n        : \"Google Safe Browsing check completed; no known matches\";\n\n  const threatIntelligenceStatus = links === 0\n    ? \"Not required - no URLs detected\"\n    : urlCheckRan\n      ? \"Google Safe Browsing checked\"\n      : \"Not checked\";\n\n  const urlReputation = links === 0\n    ? \"Not applicable - no URLs detected\"\n    : !urlCheckRan\n      ? \"Not verified\"\n      : threatDetected\n        ? \"THREAT MATCHED: \" +\n          threatMatches.map(m =>\n            `${m.threatType || \"Unknown threat\"} - ${\n              m.threat && m.threat.url\n                ? m.threat.url\n                : \"URL not provided\"\n            }`\n          ).join(\"; \")\n        : \"No known threats found (not a guarantee of safety)\";\n\n  const report = [\n    \"SENTINELAI SECURITY THREAT REPORT\",\n    \"================================\",\n    \"\",\n    \"EMAIL RISK ASSESSMENT\",\n    \"---------------------\",\n    `Preliminary Risk: ${risk}`,\n    `Links Detected: ${links}`,\n    `Suspicious Indicators: ${indicators}`,\n    \"\",\n    \"WHY THIS EMAIL WAS FLAGGED\",\n    \"--------------------------\",\n    riskExplanation,\n    \"\",\n    \"DETECTED URLS\",\n    \"-------------\",\n    ...(detectedUrls.length > 0\n      ? detectedUrls.map((url, index) => `${index + 1}. ${url}`)\n      : [\"No URLs detected.\"]),\n    \"\",\n    \"MATCHED WARNING PHRASES\",\n    \"-----------------------\",\n    ...(suspiciousKeywords.length > 0\n      ? suspiciousKeywords.map(\n          (keyword, index) => `${index + 1}. ${keyword}`\n        )\n      : [\"No warning phrases detected.\"]),\n    \"\",\n    `Risk Verification: ${verificationStatus}`,\n    \"\",\n    \"PRIVACY SECURITY ASSESSMENT\",\n    \"---------------------------\",\n    `Sensitive Data Detected: ${sensitiveDetected ? \"YES\" : \"NO\"}`,\n    `Sensitive Data Types: ${sensitiveTypes.join(\", \") || \"None detected\"}`,\n    `Privacy Scan Status: ${privacyScanStatus}`,\n    `Privacy Status: ${privacyStatus}`,\n    \"\",\n    \"AI & THREAT INTELLIGENCE\",\n    \"------------------------\",\n    `External AI Analysis: ${externalAIAllowed ? \"Allowed\" : \"Blocked\"}`,\n    `Threat Intelligence: ${threatIntelligenceStatus}`,\n    `URL Reputation: ${urlReputation}`,\n    \"\",\n    \"RECOMMENDATIONS\",\n    \"---------------\",\n    ...recommendations,\n    \"\",\n    \"IMPORTANT:\",\n    \"This is a preliminary automated security assessment.\",\n    \"Detected URLs are not automatically confirmed to be malicious.\",\n    \"Matched phrases are warning signs, not proof of phishing.\",\n    \"A clean URL reputation result does not guarantee an email is safe.\",\n    \"The privacy scan is not a complete sensitive-data audit.\",\n    \"\",\n    \"Generated by SentinelAI\"\n  ].join(\"\\n\");\n\n  return {\n    json: {\n      messageId: data.messageId ?? null,\n      severity: risk,\n      riskExplanation,\n      linkCount: links,\n      suspiciousIndicatorCount: indicators,\n      detectedUrls,\n      suspiciousKeywords,\n      sensitiveDataDetected: sensitiveDetected,\n      sensitiveDataTypes: sensitiveTypes,\n      privacyStatus,\n      privacyScanStatus,\n      externalAIAllowed,\n      report,\n      urlCheckRan,\n      threatDetected,\n      threatMatchCount: threatMatches.length,\n      reportStatus: \"PRELIMINARY\"\n    }\n  };\n});\n"
+      },
+      "id": "2c61a441-4c87-4c9f-b8b9-e09c13f39cd4",
+      "name": "Security Report Generator",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2016,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "f137cf79-392b-4983-b1b6-2aadf5b8763f",
+              "leftValue": "={{ $json.suspiciousIndicatorCount }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "6ad57d29-882e-4641-824e-c5d7ffc836bb",
+      "name": "If",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        2240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "YOUR_REPORT_EMAIL@example.com",
+        "subject": "SentinelAI - Security Threat Report",
+        "emailType": "text",
+        "message": "={{ $json.report }}",
+        "options": {}
+      },
+      "id": "af6722e5-4256-4126-ae2b-01ad074b49f1",
+      "name": "Send a message",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        2464,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Remove Duplicates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove Duplicates": {
+      "main": [
+        [
+          {
+            "node": "Get a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get a message": {
+      "main": [
+        [
+          {
+            "node": "Sensitive Data Scanner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sensitive Data Scanner": {
+      "main": [
+        [
+          {
+            "node": "Code Node Link Dectection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code Node Link Dectection": {
+      "main": [
+        [
+          {
+            "node": "Preliminary Risk Assessment.",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preliminary Risk Assessment.": {
+      "main": [
+        [
+          {
+            "node": "Privacy Security Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Privacy Security Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Security Report Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Security Report Generator": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "nodeGroups": [],
+  "tags": []
+}
